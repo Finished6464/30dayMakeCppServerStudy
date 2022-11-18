@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "syslog": "log",
+        "cstring": "cpp"
+    }
+}
