@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
-#include "epoll_x.h"
+#include "channel.h"
 #include "util.h"
 #include "socket_x.h"
 
@@ -24,7 +24,7 @@ static void handleEvent(int fd)
             break;
         } else if (bytes_read == 0) {  //EOF事件，一般表示客户端断开连接
             printf("client fd %d disconnected\n", fd);
-            close(fd);   //关闭socket会自动将文件描述符从epoll树上移除            
+            close(fd);   //关闭socket会自动将文件描述符从epoll树上移除
             break;
         } //剩下的bytes_read == -1的情况表示其他错误
         else {
@@ -40,22 +40,27 @@ int main()
     InetAddress serv_addr("127.0.0.1", 8888);
     if (serv_sock.Bind(&serv_addr) != -1 && serv_sock.Listen() != -1) {
         EpollX ep;
-        ep.AddFd(serv_sock.fd(), EPOLLIN);
-        InetAddress clnt_addr;
-        while (true) {
-            EPOLLEVENTS events = ep.Poll();
-            for (std::size_t i = 0; i < events.size(); i++) {
-                if (events[i].data.fd == serv_sock.fd()) {    //发生事件的fd是服务器socket fd，表示有新客户端连接     
-                    clnt_addr.Reset();
-                    SocketX clnt_sock(serv_sock.Accept(&clnt_addr));
-                    if (clnt_sock.fd() != -1) {
-                        printf("new client fd %d! IP: %s Port: %d\n", clnt_sock.fd(), inet_ntoa(clnt_addr.addr()->sin_addr), ntohs(clnt_addr.addr()->sin_port));
-                        clnt_sock.SetBlockMode(false);
-                        ep.AddFd(clnt_sock.fd(), EPOLLIN | EPOLLET);
+        // ep.AddFd(serv_sock.fd(), EPOLLIN);
+        Channel serv_channel(&ep, serv_sock.fd());
+        if (serv_channel.EnableReading(EPOLLIN) != -1) {
+            InetAddress clnt_addr;
+            while (true) {
+                EPOLLEVENTS events = ep.Poll();
+                for (std::size_t i = 0; i < events.size(); i++) {
+                    if (events[i]->fd() == serv_channel.fd()) {    //发生事件的fd是服务器socket fd，表示有新客户端连接     
+                        clnt_addr.Reset();
+                        SocketX clnt_sock(serv_sock.Accept(&clnt_addr));
+                        if (clnt_sock.fd() != -1) {
+                            printf("new client fd %d! IP: %s Port: %d\n", clnt_sock.fd(), inet_ntoa(clnt_addr.addr()->sin_addr), ntohs(clnt_addr.addr()->sin_port));
+                            clnt_sock.SetBlockMode(false);
+                            Channel clnt_channel(&ep, clnt_sock.fd());
+                            clnt_channel.EnableReading(EPOLLIN | EPOLLET);
+                            // ep.AddFd(clnt_sock.fd(), EPOLLIN | EPOLLET);
+                        }
+                    } else if ((events[i])->revents() & EPOLLIN) {      //发生事件的是客户端，并且是可读事件（EPOLLIN）
+                        printf("begin handle client event.\n");
+                        handleEvent(events[i]->fd());         //处理该fd上发生的事件
                     }
-                } else if (events[i].events & EPOLLIN) {      //发生事件的是客户端，并且是可读事件（EPOLLIN）
-                    // printf("begin handle client event.\n");
-                    handleEvent(events[i].data.fd);         //处理该fd上发生的事件
                 }
             }
         }
