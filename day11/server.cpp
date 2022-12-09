@@ -41,22 +41,23 @@ ThreadPoll::~ThreadPoll()
     printf("all of threads finish.\n");
 }
 
-bool ThreadPoll::Add(std::function<void()> func)
-{
-    { //在这个{}作用域内对std::mutex加锁，出了作用域会自动解锁，不需要调用unlock()
-        std::unique_lock<std::mutex> lock(tasks_mtx_);
-        if (stoped_) {
-            // throw std::runtime_error("ThreadPoll already stop, can't add task any more");
-            printf("ThreadPoll already stop, can't add task any more!\n");
-            return false;
-        }
+// bool ThreadPoll::Add(std::function<void()> func)
+// {
+//     { //在这个{}作用域内对std::mutex加锁，出了作用域会自动解锁，不需要调用unlock()
+//         std::unique_lock<std::mutex> lock(tasks_mtx_);
+//         if (stoped_) {
+//             // throw std::runtime_error("ThreadPoll already stop, can't add task any more");
+//             printf("ThreadPoll already stop, can't add task any more!\n");
+//             return false;
+//         }
             
-        tasks_.emplace(func);
-    }
+//         tasks_.emplace(func);
+//     }
 
-    cv_.notify_one();    //通知一次条件变量
-    return true;
-}
+//     cv_.notify_one();    //通知一次条件变量
+//     return true;
+// }
+
 
 
 EventLoop::EventLoop()
@@ -77,7 +78,10 @@ void EventLoop::Loop()
     while (!require_quit_) {
         EPOLLEVENTS chs = ep_->Poll();
         for (EPOLLEVENTS::iterator it = chs.begin(); it != chs.end(); ++it) {
-            thread_poll_->Add(std::bind(&Channel::HandleEvent, *it));
+            if (((*it)->events() & EPOLLET) > 0)
+                thread_poll_->Add(std::bind(&Channel::HandleEvent, *it));
+            else
+                (*it)->HandleEvent();
         }
     }
 }
