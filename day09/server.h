@@ -4,7 +4,7 @@
 #include <map>
 #include "../day06/channel.h"
 #include "../day06/socket_x.h"
-
+#include "util.h"
 
 class EventLoop 
 {
@@ -56,7 +56,9 @@ private:
     int fd_;
     Channel *channel_;
     std::function<void(int)> callback_;
+    Buffer* buff_;
 };
+
 
 class Server
 {

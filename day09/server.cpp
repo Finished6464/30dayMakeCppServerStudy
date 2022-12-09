@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
-#include "../day06/util.h"
+
 
 
 EventLoop::EventLoop()
@@ -81,30 +81,34 @@ Connection::Connection(EventLoop *loop, int fd, std::function<void(int)> callbac
 {
     channel_ = new Channel(loop_->ep(), fd_, std::bind(&Connection::Echo, this)); //该连接的Channel
     channel_->EnableReading(EPOLLIN | EPOLLET); //打开读事件监听
+
+    buff_ = new Buffer;
 }
 
 Connection::~Connection()
 {
     if (channel_) delete channel_;
+    if (buff_) delete buff_;
 }
 
 void Connection::Echo()
 {
     // 回显sockfd发来的数据
     if (fd_) {
-        ssize_t offset = 0; 
         char buf[1024] = {0};     //定义缓冲区
         // memset(&buf, 0, sizeof(buf));       //清空缓冲区
         while (true) {    //由于使用非阻塞IO，需要不断读取，直到全部读取完毕
-            ssize_t bytes_read = read(fd_, buf + offset, sizeof(buf));
+            ssize_t bytes_read = read(fd_, buf, sizeof(buf));
             if (bytes_read > 0) { //保存读取到的bytes_read大小的数据            
-                offset += bytes_read;
+                buff_->Append(buf, bytes_read);
             } else if (bytes_read == -1 && errno == EINTR) {  //客户端正常中断、继续读取
                 continue;
             } else if (bytes_read == -1 && ((errno == EAGAIN) || (errno == EWOULDBLOCK))) {//非阻塞IO，这个条件表示数据全部读取完毕
                 //该fd上数据读取完毕
                 printf("message from client fd %d: %s\n", fd_, buf);  
-                write(fd_, buf, sizeof(buf));           //将相同的数据写回到客户端
+                // write(fd_, buf, bytes_read);           //将相同的数据写回到客户端
+                errif(write(fd_, buff_->c_str(), buff_->Size()) == -1, "socket write error");
+                buff_->Clear();
                 break;
             } else if (bytes_read == 0) {  //EOF事件，一般表示客户端断开连接
                 printf("client fd %d disconnected\n", fd_);
@@ -200,8 +204,10 @@ void Server::NewConnection(int fd)
 
 void Server::DeleteConnection(int fd)
 {
+    // printf("DeleteConnection(%d)\n", fd);
     Connection *conn = connections_[fd];
     connections_.erase(fd);
     close(fd);
     delete conn;
+    // printf("DeleteConnection(%d) ok.\n", fd);
 }
