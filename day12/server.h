@@ -12,14 +12,14 @@
 #include "../day09/util.h"
 
 
-class ThreadPool 
+class ThreadPool
 {
 public:
     ThreadPool(int size = 10);  // 默认size最好设置为std::thread::hardware_concurrency()
     ~ThreadPool();
     // bool Add(std::function<void()> func);
     // template<class F, class... Args>
-    // auto ThreadPoll::Add(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type>;
+    // auto ThreadPool::Add(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type>;
 template<class F, class... Args>
 auto Add(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type>;
 
@@ -68,7 +68,7 @@ public:
 private:
     EpollX *ep_;
     bool require_quit_;
-    ThreadPoll *thread_poll_;
+    // ThreadPool *thread_poll_;
 };
 
 
@@ -114,15 +114,19 @@ public:
     ~Server();
 
     bool Startup(const char* addr, int port);
+    void Stop();
     // void HandleReadEvent(int clnt_fd);
     void NewConnection(int fd);
     void DeleteConnection(int fd);
 
 private:
-    EventLoop *loop_;
-    // EPOLLEVENTS channels_;
-    Acceptor* acceptor_;
-    std::map<int, Connection*> connections_; //所有TCP连接
+    // EventLoop *loop_;
+    // Acceptor* acceptor_;
+    // std::map<int, Connection*> connections_; //所有TCP连接
+    EventLoop *main_reactor_;     //只负责接受连接，然后分发给一个subReactor
+    Acceptor *acceptor_;                     //连接接受器
+    std::map<int, Connection*> connections_; //TCP连接
+    std::vector<EventLoop*> sub_reactors_;    //负责处理事件循环
+    ThreadPool *thpool_;     //线程池
 };
-
 #endif //SERVER_H_

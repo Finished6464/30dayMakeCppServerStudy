@@ -64,25 +64,27 @@ EventLoop::EventLoop()
 : require_quit_(false)
 {
     ep_ = new EpollX;
-    thread_poll_ = new ThreadPool;
+    // thread_poll_ = new ThreadPool;
 }
 
 EventLoop::~EventLoop()
 {    
-    delete thread_poll_;
+    // delete thread_poll_;
     delete ep_;
 }
 
 void EventLoop::Loop()
 {
     while (!require_quit_) {
-        EPOLLEVENTS chs = ep_->Poll();
-        for (EPOLLEVENTS::iterator it = chs.begin(); it != chs.end(); ++it) {
-            if (((*it)->events() & EPOLLET) > 0)
-                thread_poll_->Add(std::bind(&Channel::HandleEvent, *it));
-            else
-                (*it)->HandleEvent();
-        }
+        // EPOLLEVENTS chs = ep_->Poll();
+        // for (EPOLLEVENTS::iterator it = chs.begin(); it != chs.end(); ++it) {
+        //     if (((*it)->events() & EPOLLET) > 0)
+        //         thread_poll_->Add(std::bind(&Channel::HandleEvent, *it));
+        //     else
+        //         (*it)->HandleEvent();
+        // }
+        for (auto& ch : ep_->Poll())
+            ch->HandleEvent();
     }
 }
 
@@ -186,19 +188,33 @@ void Connection::Echo()
 }
 
 Server::Server(EventLoop *loop)
-: loop_(loop)
-, acceptor_(nullptr)
-{    
+: main_reactor_(loop)
+{
+    acceptor_ = new Acceptor(main_reactor_, std::bind(&Server::NewConnection, this, std::placeholders::_1));
+    int size = std::thread::hardware_concurrency();     //线程数量，也是subReactor数量
+    thpool_ = new ThreadPool(size);      //新建线程池
+    for (int i = 0; i < size; ++i) {
+        EventLoop *loop = new EventLoop();
+        sub_reactors_.push_back(loop);     //每一个线程是一个EventLoop
+        thpool_->Add(std::bind(&EventLoop::Loop, loop));      //开启所有线程的事件循环
+    }
 }
 
 Server::~Server()
 {        
     // for (std::size_t i = 0; i < channels_.size(); i++)
-    //     delete channels_[i];
+    //     delete channels_[i];    
     for (const auto& n : connections_) {
         close(n.first);
         delete n.second;
     }
+
+    for (auto& r : sub_reactors_) {
+        delete r;
+    }
+
+    delete thpool_;
+    delete acceptor_;
 }
 
 bool Server::Startup(const char* addr, int port)
@@ -213,8 +229,15 @@ bool Server::Startup(const char* addr, int port)
     // }
     
     // return false;
-    acceptor_ = new Acceptor(loop_, std::bind(&Server::NewConnection, this, std::placeholders::_1));
+    
     return acceptor_->Prepare(addr, port);
+}
+
+void Server::Stop()
+{
+    main_reactor_->RequireQuit();
+    for (auto& n : sub_reactors_)
+        n->RequireQuit();
 }
 
 // void Server::HandleReadEvent(int clnt_fd)
@@ -258,16 +281,23 @@ void Server::NewConnection(int fd)
     //     clnt_channel->EnableReading(EPOLLIN | EPOLLET);
     //     channels_.push_back(clnt_channel);
     // }
-    Connection *conn = new Connection(loop_, fd, std::bind(&Server::DeleteConnection, this, std::placeholders::_1));
+
+    // Connection *conn = new Connection(loop_, fd, std::bind(&Server::DeleteConnection, this, std::placeholders::_1));
+    int random = fd % sub_reactors_.size();    //调度策略：全随机
+    Connection *conn = new Connection(sub_reactors_[random], fd, std::bind(&Server::DeleteConnection, this, std::placeholders::_1));   //分配给一个subReactor
     connections_[fd] = conn;
 }
 
 void Server::DeleteConnection(int fd)
 {
     // printf("DeleteConnection(%d)\n", fd);
-    Connection *conn = connections_[fd];
-    connections_.erase(fd);
-    close(fd);
-    delete conn;
+    auto it = connections_.find(fd);
+    if (it != connections_.end()) {
+        Connection *conn = connections_[fd];
+        connections_.erase(fd);
+        close(fd);
+        delete conn;
+    }
+
     // printf("DeleteConnection(%d) ok.\n", fd);
 }
